@@ -1,3 +1,12 @@
 {
-  "report_name": "СЧЕТ._Заявление на открытие Б"
+  "report_name": "СЧЕТ._Заявление на открытие Б",
+  "params": {
+    "Podpisant": 2000,
+    "Controler": 2000,
+    "InstitutionID": 2000
+  },
+  "marks": {
+    "Type": 14,
+    "ID": 1
+  }
 }
