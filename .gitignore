@@ -182,3 +182,4 @@ cython_debug/
 .idea/
 *.sql
 *.wrd
+*.json-

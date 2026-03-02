@@ -1,0 +1,13 @@
+pyinstaller --onefile --noconsole RepExecutor.py
+
+pyinstaller --onefile --noconsole --icon=C:\Icons\myicon.ico RepExecutor.py
+
+RepExecutor.spec
+pyinstaller RepExecutor.py --onefile --noconsole --icon=app.ico
+
+
+pip freeze > requirements.txt
+
+
+
+

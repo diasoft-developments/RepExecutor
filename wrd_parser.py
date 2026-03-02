@@ -2,6 +2,11 @@ import re
 import os
 from loguru import logger
 
+from diasoft_macros import parse_diasoft_macros
+from params import inject_report_params
+from utils import log_execution
+
+@log_execution()
 def decode_bytes(b: bytes) -> str:
     for enc in ("utf-8", "cp1251", "latin1"):
         try:
@@ -10,6 +15,7 @@ def decode_bytes(b: bytes) -> str:
             continue
     return b.decode("utf-8", errors="replace")
 
+@log_execution()
 def delphi_de_serializer(text):
     """
     Разбирает контент SQL.Strings построчно.
@@ -64,6 +70,7 @@ def delphi_de_serializer(text):
             
     return "".join(final_result)
 
+@log_execution()
 def heal_sql(sql):
     """
     Минимальная правка макросов, если они были разорваны внутри кавычек.
@@ -77,7 +84,8 @@ def heal_sql(sql):
     
     return sql
 
-def parse_wrd_text(text):
+@log_execution()
+def parse_wrd_text(text: str, params: dict):
     sql_text = None
     docname = None
 
@@ -95,14 +103,12 @@ def parse_wrd_text(text):
         # Шаг 2: Легкая косметика макросов
         sql_text = heal_sql(sql_text)
         
-        # Шаг 3: Применение внешних макросов системы
-        try:
-            from diasoft_macros import parse_diasoft_macros
-            from params import inject_report_params
-            sql_text = parse_diasoft_macros(sql_text)
-            sql_text = inject_report_params(sql_text)
-        except ImportError:
-            pass
+        # Шаг 3: Применение внешних макросов системы        
+        sql_text = parse_diasoft_macros(sql_text)
+        
+        # Шаг 4: Применение параметров
+        sql_text = inject_report_params(sql_text, params)
+
 
     # Поиск DocName
     match_name = re.search(r"DocName\s*[=:]\s*'([^']*)'", text, re.IGNORECASE)
@@ -111,6 +117,7 @@ def parse_wrd_text(text):
 
     return sql_text, docname
 
+@log_execution()
 def save_sql(input_file):
     if not os.path.exists(input_file): return
     with open(input_file, 'rb') as f:
@@ -128,7 +135,7 @@ def save_sql(input_file):
             f_out.write(sql.strip())
         logger.info(f"Выполнено: {out_name}")
 
-if __name__ == "__main__":
-    import glob
-    for f in glob.glob("*.wrd") + glob.glob("*.dfm"):
-        save_sql(f)
+# if __name__ == "__main__":
+#     import glob
+#     for f in glob.glob("*.wrd") + glob.glob("*.dfm"):
+#         save_sql(f)
