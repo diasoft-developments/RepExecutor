@@ -3,8 +3,8 @@ import os
 from loguru import logger
 
 from diasoft_macros import parse_diasoft_macros
-from params import inject_report_params
-from utils import log_execution
+from wrd_params import inject_report_params
+from utils_logger import log_execution
 
 @log_execution()
 def decode_bytes(b: bytes) -> str:

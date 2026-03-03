@@ -1,10 +1,7 @@
-from pathlib import Path
-import re
-
 from loguru import logger
 import win32com.client as win32
 
-from utils import log_execution
+from utils_logger import log_execution
 
 @log_execution()
 def perform_mail_merge(template_doc_path, data_csv_path, output_pdf_path):
@@ -32,7 +29,7 @@ def perform_mail_merge(template_doc_path, data_csv_path, output_pdf_path):
             SubType=0 #win32.constants.wdMergeSubTypeOther
         )
         merge.Execute()
-        logger.info("Выполнили merge.Execute")
+        logger.info("Выполнили merge")
         merged_doc = word.ActiveDocument
 
         merged_doc.Fields.Update()

@@ -7,14 +7,15 @@ from pathlib import Path
 import re
 import pyodbc
 from dotenv import load_dotenv
-from utils import configure_logger, get_base_path, log_execution
-from word import perform_mail_merge
+from utils_logger import configure_logger, get_base_path, log_execution
+from utils_system import log_drives, log_net_use, log_runtime_user
+from utils_word import perform_mail_merge
 from wrd_parser import decode_bytes, parse_wrd_text
 from types import SimpleNamespace
 import tempfile, pandas as pd
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any 
 
 # custom errors -------------------------------------------------------------
 
@@ -132,6 +133,7 @@ def get_connection():
     username = os.getenv("DB_USER")
     password = os.getenv("DB_PASSWORD")
     driver = os.getenv("DB_DRIVER")
+    trustServerCertificate = os.getenv("DB_TrustServerCertificate")
 
     connection_string = (
         f"DRIVER={driver};"
@@ -139,7 +141,7 @@ def get_connection():
         f"DATABASE={database};"
         f"UID={username};"
         f"PWD={password};"
-        "TrustServerCertificate=yes;"
+        F"TrustServerCertificate={trustServerCertificate};"
     )
 
     try:
@@ -211,35 +213,63 @@ def save_sql_to_file(sql_text: str, full_path: str, docname: str | None = None) 
         raise
 
 @log_execution()
-def rows_to_csv(rows):
+def rows_to_csv(rows, directory: str | None = None, base_name: str | None = None):
     """
-    Сериализует список объектов в временный CSV-файл для Mail Merge.
+    Сериализует список объектов в CSV-файл для Mail Merge.
+
+    При передаче `directory` создаёт файл в указанной папке, иначе
+    использует системный временный каталог.  Имя файла
+    может быть стандартизировано, если указан `base_name`.
 
     Args:
         rows (list): Список объектов SimpleNamespace с данными.
+        directory (str | None): Путь к каталогу для хранения CSV. Если `None`,
+            используется временный файл OS.
+        base_name (str | None): Базовое имя для файла (без расширения). Если
+            указано, к нему будет добавлен штамп времени для уникальности.
 
     Returns:
-        Path: Путь к созданному временному CSV-файлу.
+        Path: Путь к созданному CSV-файлу.
 
     Raises:
         CSVCreationError: Если список пуст или возникла ошибка записи.
-    """
+    """    
     if not rows:
         raise CSVCreationError("Нечего записывать, список строк пуст")
 
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".csv",
-            delete=False,
-            encoding="utf-8-sig",
-            newline=""
-        ) as f:
-            csv_path = Path(f.name)
-
-            # преобразуем namespace → dict
+        # если указали базовое имя, формируем собственную длину пути,
+        # иначе падаем на NamedTemporaryFile
+        if base_name:
+            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_base = re.sub(r'[\\/*?:"<>|]', "", base_name)
+            fname = f"{safe_base}_{now}.csv"
+            if directory:
+                Path(directory).mkdir(parents=True, exist_ok=True)
+                csv_path = Path(directory) / fname
+            else:
+                csv_path = Path(tempfile.gettempdir()) / fname
+            # записываем через pandas напрямую
             df = pd.DataFrame([vars(r) for r in rows])
-            df.to_csv(f, sep=";", index=False)
+            df.to_csv(csv_path, sep=";", index=False, encoding="utf-8-sig")
+        else:
+            kwargs = {
+                "mode": "w",
+                "suffix": ".csv",
+                "delete": False,
+                "encoding": "utf-8-sig",
+                "newline": "",
+            }
+            if directory:
+                Path(directory).mkdir(parents=True, exist_ok=True)
+                kwargs["dir"] = directory
+
+            with tempfile.NamedTemporaryFile(**kwargs) as f:
+                csv_path = Path(f.name)
+
+                # преобразуем namespace → dict
+                df = pd.DataFrame([vars(r) for r in rows])
+                df.to_csv(f, sep=";", index=False)
     except IOError as ioe:
         raise CSVCreationError(f"Ошибка при создании CSV: {ioe}") from ioe
 
@@ -339,7 +369,14 @@ def process_query_and_files(connection, cfg, common_cfg):
             logger.warning("Отсутствуют поля Path/FileName в результате, пропускаю запись")
             continue
 
-        full_path = str(Path(path_val) / fname_val)
+        full_path = Path(path_val) / fname_val               
+        logger.debug(f"1 Пробуем открыть файл: {full_path}")
+        logger.debug(f"Существует: {full_path.exists()}")
+                
+        full_path = full_path.resolve()
+        logger.debug(f"2 Пробуем открыть файл: {full_path}")
+        logger.debug(f"Существует: {full_path.exists()}")    
+                           
         try:
             with open(full_path, "rb") as f:
                 data = f.read()
@@ -394,13 +431,14 @@ def process_query_and_files(connection, cfg, common_cfg):
                     sql_text = full_sql
 
                     # Сохранение полного SQL в файл
-                    is_sqlsave  = common_cfg.getboolean("sql", "save", fallback=False)
-                    if is_sqlsave:
-                        sql_save_path = common_cfg.get("sql", "path", fallback="")
+                    sql_file_path = None
+                    is_tmpsave  = common_cfg.getboolean("tmp", "save", fallback=False)
+                    if is_tmpsave:
+                        tmp_save_path = common_cfg.get("tmp", "path", fallback="")
                         filename = Path(full_path).stem
                         if ID:
                             filename = f"{filename}_{ID}"
-                        save_sql_to_file(sql_text, sql_save_path, filename)
+                        sql_file_path = save_sql_to_file(sql_text, tmp_save_path, filename)
 
 
                     # Выполнить SQL
@@ -410,44 +448,58 @@ def process_query_and_files(connection, cfg, common_cfg):
                         data_rows = execute_sql(connection, sql_text)
 
                         # сохранить результирующие строки в CSV (может бросить CSVCreationError)
-                        csv_path = rows_to_csv(data_rows)
-
+                        csv_dir = tmp_save_path if is_tmpsave and tmp_save_path else None
+                        base = Path(full_path).stem
+                        if ID:
+                            base = f"{base}_{ID}"
+                        csv_path = rows_to_csv(data_rows, csv_dir, base)  # имя стандартизировано
                         template_doc_path = str(Path(full_path).parent / docname)
 
-                        logger.info(f"csv_path: {csv_path}")
+                        logger.debug(f"csv_path: {csv_path}")
                         logger.info(f"template_path: {template_doc_path}")
 
                         if Path(template_doc_path).exists():
 
                             output_path_cfg = Path(cfg.output_path)
-
-                            logger.info(f"cfg.output_path: {output_path_cfg}")
                             logger.info(f"ID: {ID}")
 
                             # если указан файл (есть расширение)
                             if output_path_cfg.suffix:
                                 output_pdf_path = output_path_cfg
-                                logger.info("Указано имя файла — используем его")
+                                logger.debug("Указано имя файла — используем его")
                             else:
                                 # если указана только папка
                                 output_path_cfg.mkdir(parents=True, exist_ok=True)
                                 output_pdf_path = output_path_cfg / f"rep_{ID if ID else 'result'}.pdf"
-                                logger.info("Указан только путь — формируем имя файла")
+                                logger.debug("Указан только путь — формируем имя файла")
 
                             output_pdf_path = str(output_pdf_path)
 
-                            logger.info(f"Итоговый output_pdf_path: {output_pdf_path}")
+                            logger.debug(f"Итоговый output_pdf_path: {output_pdf_path}")
 
                             try:
                                 perform_mail_merge(template_doc_path, csv_path, output_pdf_path)
                             finally:
-                                # Удаляем временный CSV по завершении (успешно или с ошибкой)
-                                try:
-                                    if csv_path and Path(csv_path).exists():
-                                        Path(csv_path).unlink()
-                                        logger.debug(f"Временный CSV удалён: {csv_path}")
-                                except Exception:
-                                    logger.exception(f"Не удалось удалить временный CSV: {csv_path}")
+                                # Проверяем настройку [tmp] save из INI: если False, удаляем временные файлы
+                                should_delete_tmp = not is_tmpsave
+                                
+                                if should_delete_tmp:
+                                    try:
+                                        if csv_path and Path(csv_path).exists():
+                                            Path(csv_path).unlink()
+                                            logger.debug(f"Временный CSV удалён (save=false): {csv_path}")
+                                    except Exception:
+                                        logger.exception(f"Не удалось удалить временный CSV: {csv_path}")
+                                    
+                                    if sql_file_path:
+                                        try:
+                                            if Path(sql_file_path).exists():
+                                                Path(sql_file_path).unlink()
+                                                logger.debug(f"Временный SQL удалён (save=false): {sql_file_path}")
+                                        except Exception:
+                                            logger.exception(f"Не удалось удалить временный SQL: {sql_file_path}")
+                                else:
+                                    logger.debug(f"Сохраняем временные файлы (save=true): CSV={csv_path}, SQL={sql_file_path}")
 
                         else:
                             logger.warning(f"Шаблон {template_doc_path} не найден")
@@ -468,19 +520,46 @@ def process_query_and_files(connection, cfg, common_cfg):
 if __name__ == "__main__":
     # настройка логирования (из *.ini)
     configure_logger()
+    
+    log_runtime_user()
+    log_drives()
+    log_net_use()    
 
     # всегда загружаем и валидируем конфиг
     cfg = read_config()
     if not cfg:
         logger.error("Некорректный файл конфигурации, см. выше ошибки.")
         raise SystemExit(1)
-    logger.info("Считали файл конфигурации")
+
+    # подготовка tmp-настроек
+    config = configparser.ConfigParser()
+    config.read(get_base_path() / "RepExecutor.ini", encoding="utf-8")
+    is_tmpsave = config.getboolean("tmp", "save", fallback=False)
+    tmp_save_path = config.get("tmp", "path", fallback="") if is_tmpsave else None
+
+    # резервируем файл конфигурации в tmp-папке, если нужно
+    config_json = get_base_path() / "RepExecutor.json"
+    if is_tmpsave and tmp_save_path and config_json.exists():
+        try:
+            Path(tmp_save_path).mkdir(parents=True, exist_ok=True)
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            dst = Path(tmp_save_path) / f"RepExecutor_{stamp}.json"
+            import shutil
+            shutil.copy2(config_json, dst)
+            logger.info(f"Сохранена копия конфигурации: {dst}")
+        except Exception:
+            logger.exception("Ошибка при сохранении копии RepExecutor.json")
 
     connection = get_connection()
 
     if connection:
-        config = configparser.ConfigParser()
-        config.read(get_base_path() / "RepExecutor.ini", encoding="utf-8")
-
         process_query_and_files(connection, cfg, config)
         connection.close()
+
+    # всегда удаляем исходный конфиг после обработки (копия, если надо, уже сделана)
+    try:
+        if config_json.exists():
+            config_json.unlink()
+            logger.info(f"Исходный RepExecutor.json удалён: {config_json}")
+    except Exception:
+        logger.exception("Не удалось удалить исходный RepExecutor.json")
