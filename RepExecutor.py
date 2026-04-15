@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import configparser
 import datetime
 from loguru import logger
@@ -9,13 +10,14 @@ import pyodbc
 from dotenv import load_dotenv
 from utils_logger import configure_logger, get_base_path, log_execution
 from utils_system import log_drives, log_net_use, log_runtime_user
-from utils_word import perform_mail_merge
+from utils_word import perform_mail_merge, submit_mail_merge_job
 from wrd_parser import decode_bytes, parse_wrd_text
 from types import SimpleNamespace
 import tempfile, pandas as pd
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from typing import Optional, Dict, Any 
+# import concurrent.futures
 
 # custom errors -------------------------------------------------------------
 
@@ -311,7 +313,11 @@ def process_query_and_files(connection, cfg, common_cfg):
         connection: Активное соединение с БД.
         cfg (ConfigModel): Валидированная конфигурация запуска.
         common_cfg (ConfigParser): Общие настройки из .ini файла.
+
+    Returns:
+        list[Path]: Список путей к сгенерированным файлам.
     """
+    generated_files = []
     sql = """
         select g.Path     as Path
               ,s.FileName as FileName
@@ -440,7 +446,6 @@ def process_query_and_files(connection, cfg, common_cfg):
                             filename = f"{filename}_{ID}"
                         sql_file_path = save_sql_to_file(sql_text, tmp_save_path, filename)
 
-
                     # Выполнить SQL
                     try:
                         # выполнять запрос и получить результат; execute_sql теперь выбросит
@@ -465,8 +470,9 @@ def process_query_and_files(connection, cfg, common_cfg):
 
                             # если указан файл (есть расширение)
                             if output_path_cfg.suffix:
-                                output_pdf_path = output_path_cfg
-                                logger.debug("Указано имя файла — используем его")
+                                base_name = output_path_cfg.stem
+                                output_pdf_path = output_path_cfg.parent / f"{base_name}.pdf"
+                                logger.debug("Указано имя файла — формируем уникальное")
                             else:
                                 # если указана только папка
                                 output_path_cfg.mkdir(parents=True, exist_ok=True)
@@ -476,22 +482,20 @@ def process_query_and_files(connection, cfg, common_cfg):
                             output_pdf_path = str(output_pdf_path)
 
                             logger.debug(f"Итоговый output_pdf_path: {output_pdf_path}")
-
+                            
+                            should_delete_tmp = not is_tmpsave
                             try:
-                                perform_mail_merge(template_doc_path, csv_path, output_pdf_path)
+                                # perform_mail_merge(template_doc_path, csv_path, output_pdf_path)
+                                # generated_files.append(Path(output_pdf_path))
+                                with ThreadPoolExecutor(max_workers=2) as executor:
+                                    submit_mail_merge_job(template_doc_path, csv_path, output_pdf_path, should_delete_tmp)
+                                    generated_files.append(Path(output_pdf_path))
+
+                                    logger.info(f"Mail Merge запущен в фоне: {output_pdf_path}")                                
                             finally:
                                 # Проверяем настройку [tmp] save из INI: если False, удаляем временные файлы
-                                should_delete_tmp = not is_tmpsave
-                                
-                                if should_delete_tmp:
-                                    try:
-                                        if csv_path and Path(csv_path).exists():
-                                            Path(csv_path).unlink()
-                                            logger.debug(f"Временный CSV удалён (save=false): {csv_path}")
-                                    except Exception:
-                                        logger.exception(f"Не удалось удалить временный CSV: {csv_path}")
-                                    
-                                    if sql_file_path:
+                                if should_delete_tmp:   
+                                    if sql_file_path:                                
                                         try:
                                             if Path(sql_file_path).exists():
                                                 Path(sql_file_path).unlink()
@@ -515,6 +519,7 @@ def process_query_and_files(connection, cfg, common_cfg):
             logger.error(f"Не удалось прочитать файл {full_path}: {e}")
 
     cursor.close()
+    return generated_files
 
 
 if __name__ == "__main__":

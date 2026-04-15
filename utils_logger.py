@@ -38,7 +38,7 @@ def configure_logger() -> str:
         compression=config.get("log", "compression", fallback="zip"),
         encoding="utf-8",
         # format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {extra.get(func_name, function)} | {message}"
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {function} | {message}"
+        # format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {function} | {message}"
     )
     logger.debug(f"configure_logger Load")
     return level
