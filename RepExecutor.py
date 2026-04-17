@@ -1,12 +1,12 @@
-from concurrent.futures import ThreadPoolExecutor
 import configparser
 import datetime
-from loguru import logger
 import os
 import json
-from pathlib import Path
 import re
 import pyodbc
+from concurrent.futures import ThreadPoolExecutor
+from loguru import logger
+from pathlib import Path
 from dotenv import load_dotenv
 from utils_logger import configure_logger, get_base_path, log_execution
 from utils_system import log_drives, log_net_use, log_runtime_user
@@ -14,13 +14,11 @@ from utils_word import perform_mail_merge, submit_mail_merge_job
 from wrd_parser import decode_bytes, parse_wrd_text
 from types import SimpleNamespace
 import tempfile, pandas as pd
-
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from typing import Optional, Dict, Any 
-# import concurrent.futures
+
 
 # custom errors -------------------------------------------------------------
-
 class QueryResultEmpty(Exception):
     """Вызывается, когда SQL-запрос не возвращает строк."""
 
@@ -282,7 +280,6 @@ def rows_to_csv(rows, directory: str | None = None, base_name: str | None = None
     return csv_path
 
 # ---------------------------------------------------------------------------
-
 def find_col_index(cols, name):
     """
     Ищет индекс колонки в списке по имени (без учета регистра).
@@ -485,11 +482,17 @@ def process_query_and_files(connection, cfg, common_cfg):
                             
                             should_delete_tmp = not is_tmpsave
                             try:
-                                # perform_mail_merge(template_doc_path, csv_path, output_pdf_path)
-                                # generated_files.append(Path(output_pdf_path))
-                                with ThreadPoolExecutor(max_workers=2) as executor:
-                                    submit_mail_merge_job(template_doc_path, csv_path, output_pdf_path, should_delete_tmp)
-                                    generated_files.append(Path(output_pdf_path))
+                                # with ThreadPoolExecutor(max_workers=2) as executor:
+                                #     submit_mail_merge_job(template_doc_path, csv_path, output_pdf_path, common_cfg)
+                                #     generated_files.append(Path(output_pdf_path))
+                                    
+                                future = submit_mail_merge_job(template_doc_path, csv_path, output_pdf_path, common_cfg)
+                                generated_files.append(Path(output_pdf_path))
+                                try:
+                                    result = future.result()
+                                except Exception as e:
+                                    logger.error(f"Mail Merge завершился ошибкой: {e}")
+                                    raise                                    
 
                                     logger.info(f"Mail Merge запущен в фоне: {output_pdf_path}")                                
                             finally:

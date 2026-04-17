@@ -3,23 +3,14 @@ import configparser
 from pathlib import Path
 import os
 from loguru import logger
-
-# Импорты из существующего кода
 from utils_logger import get_base_path, log_execution
 
-# ==============================
-# ЗАГРУЗКА КОНФИГУРАЦИИ
-# ==============================
 
 def load_ini_config(path: str = "RepExecutor.ini") -> configparser.ConfigParser:
     """Загружает INI конфигурацию приложения."""
     config = configparser.ConfigParser()
     config.read(path, encoding="utf-8")
     return config
-
-# ==============================
-# СОЗДАНИЕ КОНФИГУРАЦИОННОГО ФАЙЛА
-# ==============================
 
 @log_execution()
 def create_config_file(job_data: dict, config_path: str) -> bool:

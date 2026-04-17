@@ -28,7 +28,6 @@ def log_drives():
 
     for drive in drives:
         drive_type = win32file.GetDriveType(drive)
-
         types = {
             win32file.DRIVE_FIXED: "FIXED",
             win32file.DRIVE_REMOTE: "REMOTE",

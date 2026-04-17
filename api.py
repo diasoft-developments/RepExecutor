@@ -1,21 +1,15 @@
 import time
-import tempfile
 import os
 import json
-from pathlib import Path
 from pydantic import ValidationError
 from loguru import logger
-
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
-
-# Импорты из существующего кода
+from fastapi.responses import JSONResponse
 from RepExecutor import ConfigModel, get_connection, process_query_and_files, configure_logger
 from utils_logger import get_base_path, log_execution
-
-# Импорты из новых модулей
 from queue_manager import get_db_connection, get_next_job_from_queue, mark_job_done, mark_job_error, convert_job_to_config
 from config_manager import load_ini_config, create_config_file
+from utils_system import log_drives, log_net_use, log_runtime_user
 
 app = FastAPI(title="RepExecutor API", description="API для генерации отчетов Word", version="1.0.0")
 
@@ -30,13 +24,15 @@ api_metrics = {
     "last_error": None,
 }
 
-# ==============================
-# ИНИЦИАЛИЗАЦИЯ
-# ==============================
+
 @app.on_event("startup")
 async def startup_event():
     """Настройка при запуске приложения."""
     configure_logger()
+    log_runtime_user()
+    log_drives()
+    log_net_use()        
+    
     logger.info("API RepExecutor запущен")
 
 @app.middleware("http")
@@ -54,8 +50,7 @@ async def generate_report(
     from_queue: bool = False
 ):
     """
-    Генерация отчета в фоне. Клиент сразу получает подтверждение,
-    а отчёт создается асинхронно.
+    Генерация отчета в фоне. Клиент сразу получает подтверждение, а отчёт создается асинхронно.
     """
     job_id = None
     connection = None
@@ -66,16 +61,20 @@ async def generate_report(
         if from_queue:
             connection = get_db_connection()
             if not connection:
+                logger.exception(f"500 Не удалось подключиться к БД")  
                 raise HTTPException(status_code=500, detail="Не удалось подключиться к БД")
             job = get_next_job_from_queue(connection)
             if not job:
+                logger.exception(f"404 Очередь пуста") 
                 raise HTTPException(status_code=404, detail="Очередь пуста")
             job_id = job["ID"]
             config_dict = convert_job_to_config(job)
             config = ConfigModel(**config_dict)
         elif not config:
+            logger.exception(f"400 Необходимо передать config или from_queue=True") 
             raise HTTPException(status_code=400, detail="Необходимо передать config или from_queue=True")
     except ValidationError as ve:
+        logger.exception(f"422 Ошибка валидации: {ve}")
         raise HTTPException(status_code=422, detail=f"Ошибка валидации: {ve}")
     
     # Фоновая задача

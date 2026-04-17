@@ -1,0 +1,14 @@
+{
+    "report_name": "СЧЕТ._Заявление на открытие Б",
+    "output_path": "Y:\\open_acc\\10001929606.pdf",
+    "output_format": "PDF",
+    "params": {
+        "Podpisant": 10000000026,
+        "Controler": 10000000026,
+        "InstitutionID": 10000000026
+    },
+    "marks": {
+        "Type": 3,
+        "ID": 10001929606
+    }
+}
