@@ -1,51 +1,20 @@
+"""Менеджер очереди задач из БД."""
 import json
-from loguru import logger
+from typing import Optional
+
 import pyodbc
 from dotenv import load_dotenv
-import os
+from loguru import logger
 
-# Импорты из существующего кода
-from utils_logger import log_execution
+from utils.logger import log_execution
 
-# ==============================
-# РАБОТА С БД
-# ==============================
-
-@log_execution()
-def get_db_connection():
-    """Создает соединение с БД на основе переменных окружения."""
-    load_dotenv()
-
-    server = os.getenv("DB_SERVER")
-    database = os.getenv("DB_NAME")
-    username = os.getenv("DB_USER")
-    password = os.getenv("DB_PASSWORD")
-    driver = os.getenv("DB_DRIVER")
-    trust_cert = os.getenv("DB_TrustServerCertificate", "yes")
-
-    connection_string = (
-        f"DRIVER={driver};"
-        f"SERVER={server};"
-        f"DATABASE={database};"
-        f"UID={username};"
-        f"PWD={password};"
-        f"TrustServerCertificate={trust_cert};"
-    )
-
-    try:
-        conn = pyodbc.connect(connection_string, autocommit=True)
-        logger.info(f"Успешно подключено к БД: {database} на сервере {server}")
-        return conn
-    except Exception as e:
-        logger.error(f"Ошибка подключения к БД: {e}")
-        return None
 
 # ==============================
 # РАБОТА С ОЧЕРЕДЬЮ БД
 # ==============================
 
 @log_execution()
-def get_next_job_from_queue(connection) -> dict | None:
+def get_next_job_from_queue(connection: pyodbc.Connection) -> Optional[dict]:
     """
     Получает первую задачу из очереди со статусом NEW и обновляет её статус на IN_PROGRESS.
 
@@ -89,11 +58,11 @@ def get_next_job_from_queue(connection) -> dict | None:
 
 
 @log_execution()
-def mark_job_done(connection, job_id: int):
+def mark_job_done(connection: pyodbc.Connection, job_id: int) -> None:
     """Обновляет статус задачи на DONE."""
     try:
-        cursor2 = connection.cursor()
-        cursor2.execute("""
+        cursor = connection.cursor()
+        cursor.execute("""
             SET ANSI_NULLS ON;
             SET ANSI_PADDING ON;
             SET ANSI_WARNINGS ON;
@@ -101,15 +70,15 @@ def mark_job_done(connection, job_id: int):
             SET CONCAT_NULL_YIELDS_NULL ON;
             SET NUMERIC_ROUNDABORT OFF;
             SET QUOTED_IDENTIFIER ON;
-        """)        
-        cursor2.execute("""     
+        """)
+        cursor.execute("""     
         UPDATE rdbReportQueue
            SET Status     = 'DONE',
                FinishedAt = SYSDATETIME()
           from rdbReportQueue with (updlock)     
          WHERE ID = ?  
         """, job_id)
-        cursor2.close()
+        cursor.close()
 
         logger.success(f"Задача {job_id} отмечена как DONE")
     except Exception as e:
@@ -117,13 +86,14 @@ def mark_job_done(connection, job_id: int):
 
 
 @log_execution()
-def mark_job_error(connection, job_id: int, error_message: str):
+def mark_job_error(connection: pyodbc.Connection, job_id: int, 
+                    error_message: str) -> None:
     """Обновляет статус задачи на ERROR с сообщением об ошибке."""
     try:
-        cursor2 = connection.cursor()
+        cursor = connection.cursor()
         # Обрезаем сообщение до 8000 символов (ограничение БД)
         error_msg_truncated = error_message[:8000]
-        cursor2.execute("""
+        cursor.execute("""
             SET ANSI_NULLS ON;
             SET ANSI_PADDING ON;
             SET ANSI_WARNINGS ON;
@@ -131,8 +101,8 @@ def mark_job_error(connection, job_id: int, error_message: str):
             SET CONCAT_NULL_YIELDS_NULL ON;
             SET NUMERIC_ROUNDABORT OFF;
             SET QUOTED_IDENTIFIER ON;
-        """)          
-        cursor2.execute("""                   
+        """)
+        cursor.execute("""                   
             UPDATE rdbReportQueue
                SET Status       = 'ERROR',
                    FinishedAt   = SYSDATETIME(),
@@ -140,7 +110,7 @@ def mark_job_error(connection, job_id: int, error_message: str):
               from rdbReportQueue with (updlock)          
              WHERE ID = ?
         """, error_msg_truncated, job_id)
-        cursor2.close()
+        cursor.close()
 
         logger.error(f"Задача {job_id} отмечена как ERROR: {error_msg_truncated}")
     except Exception as e:
@@ -169,7 +139,9 @@ def convert_job_to_config(job: dict) -> dict:
         try:
             config_data["params"] = json.loads(job["ParametersJson"])
         except json.JSONDecodeError:
-            logger.warning(f"Не удалось распарсить ParametersJson для задачи {job.get('ID')}")
+            logger.warning(
+                f"Не удалось распарсить ParametersJson для задачи {job.get('ID')}"
+            )
 
     # Добавляем marks если присутствуют ObjectID и ObjectType
     if job.get("ObjectID") and job.get("ObjectType"):

@@ -1,5 +1,5 @@
 import re
-from utils_logger import log_execution
+from utils.logger import log_execution
 
 
 @log_execution()
@@ -10,7 +10,7 @@ def parse_diasoft_macros(content: str) -> str:
     
     
     content = replace_forceplan(content)
-    # content = replace_forceplan(content)
+    content = replace_forceorder(content)
     content = replace_isolat(content)
     content = replace_forceolan_off(content)
     content = suser_name(content)
@@ -20,7 +20,7 @@ def parse_diasoft_macros(content: str) -> str:
 @log_execution()
 def suser_name(content: str) -> str:
     """
-    Заменяет #M_FORCEPLAN на set rowcount 0
+    Заменяет #SUSER_NAME на suser_name()
     """
     return re.sub(
         r"#SUSER_NAME\b",
@@ -45,7 +45,16 @@ def replace_nolock_index(content: str) -> str:
         flags=re.IGNORECASE
     )
 
-    return pattern.sub(r"with (nolock index=\1)", content)
+    substr = pattern.sub(r"with (nolock index=\1)", content)
+
+    substr = re.sub(
+        r"#M_NOLOCK\b",
+        "(NOLOCK)",
+        substr,
+        flags=re.IGNORECASE
+    ) 
+    
+    return substr
 
 @log_execution()
 def replace_rowlock_index(content: str) -> str:
@@ -96,6 +105,18 @@ def replace_forceplan(content: str) -> str:
     )
 
 @log_execution()
+def replace_forceorder(content: str) -> str:
+    """
+    Заменяет #M_FORCEORDER на /* option (FORCE ORDER, LOOP JOIN) */
+    """
+    return re.sub(
+        r"#M_FORCEORDER\b",
+        "/* option (FORCE ORDER, LOOP JOIN) */",
+        content,
+        flags=re.IGNORECASE
+    )
+
+@log_execution()
 def replace_isolat(content: str) -> str:
     """
     Удаляет #M_ISOLAT (в любом регистре)
@@ -107,4 +128,4 @@ def replace_forceolan_off(content: str) -> str:
     """
     Удаляет #M_FORCEPLAN_OFF (в любом регистре)
     """
-    return re.sub(r"#M_FORCEPLAN_OFF\b", "", content, flags=re.IGNORECASE)    
+    return re.sub(r"#M_FORCEPLAN_OFF\b", "", content, flags=re.IGNORECASE)

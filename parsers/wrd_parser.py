@@ -2,9 +2,9 @@ import re
 import os
 from loguru import logger
 
-from diasoft_macros import parse_diasoft_macros
-from wrd_params import inject_report_params
-from utils_logger import log_execution
+from .diasoft_macros import parse_diasoft_macros
+from .wrd_params import inject_report_params
+from utils.logger import log_execution
 
 @log_execution()
 def decode_bytes(b: bytes) -> str:

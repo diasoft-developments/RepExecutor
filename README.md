@@ -51,7 +51,7 @@ path = C:\\Tasks\\tmp\\
 2. `python RepExecutor.py`.
 
 ### Зависимости
-`pyodbc`, `pywin32`, `loguru`, `python-dotenv`, `pandas`, `pydantic`.
+`pyodbc`, `pywin32`, `loguru`, `python-dotenv`, `pandas`.
 
 Логи ведутся через **loguru** (INFO/ERROR/DEBUG уровни).
 
