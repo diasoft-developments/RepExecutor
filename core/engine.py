@@ -17,6 +17,7 @@ from core.db_connector import (
     find_col_index, QueryResultEmpty
 )
 from parsers.wrd_parser import decode_bytes, parse_wrd_text
+from parsers.wrd_field_formatter import _apply_digit_fields, _apply_twr_masks
 from generators.word_generator import submit_mail_merge_job
 
 
@@ -64,7 +65,7 @@ def rows_to_csv(rows, directory: str | None = None, base_name: str | None = None
                 csv_path = Path(tempfile.gettempdir()) / fname
             # записываем через pandas напрямую
             df = pd.DataFrame([vars(r) for r in rows])
-            df.to_csv(csv_path, sep=";", index=False, encoding="utf-8-sig")
+            df.to_csv(csv_path, sep=";", index=False, encoding="utf-8-sig") # , float_format='%.2f'
         else:
             kwargs = {
                 "mode": "w",
@@ -114,7 +115,11 @@ def process_query_and_files(connection, cfg: ConfigModel, common_cfg: configpars
     """
     generated_files: List[Path] = []
     sql = """
-        select g.Path     as Path
+         select case 
+                  when isnull(g.Path, '') = ''
+                  then 'T:\\7.2_003\\BIN\\Reports\\'
+                  else g.Path
+                end as Path
                ,s.FileName as FileName
                ,s.Brief    as RepBrief
                ,s.Name     as RepName
@@ -189,7 +194,7 @@ def process_query_and_files(connection, cfg: ConfigModel, common_cfg: configpars
 
                 if ext == 'wrd':
                     text = decode_bytes(data)
-                    sql_text, docname = parse_wrd_text(text, params)
+                    sql_text, docname, digit_fields, twr_fields = parse_wrd_text(text, params)
 
                     if sql_text:
                         logger.info("SQL - извлечён")
@@ -248,6 +253,14 @@ def process_query_and_files(connection, cfg: ConfigModel, common_cfg: configpars
                         # QueryResultEmpty при отсутствии строк
                         data_rows = execute_sql(connection, sql_text)
 
+                        # Применяем TWRDigitField: преобразуем числовые поля в прописью
+                        if digit_fields:
+                            data_rows = _apply_digit_fields(data_rows, digit_fields)
+                        
+                        # Применяем TWRField: форматируем значения по маскам (@n20.2_, @d6., @s<w>)
+                        if twr_fields:
+                            data_rows = _apply_twr_masks(data_rows, twr_fields)
+                        
                         # сохранить результирующие строки в CSV (может бросить CSVCreationError)
                         csv_dir = tmp_save_path if is_tmpsave and tmp_save_path else None
                         base = Path(full_path).stem
