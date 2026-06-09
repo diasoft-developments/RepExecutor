@@ -100,8 +100,8 @@ def parse_n_mask(mask: str) -> dict:
     m = m[len(width_str):]
 
     # --- Дробная часть: .N или ,N ---
-    # .N  → decimal_sep='.', auto thousands_sep=','   (US стиль)
-    # ,N  → decimal_sep=',', auto thousands_sep='.'   (EU стиль)
+    # .N  → frac_marker='.', по умолчанию decimal_sep='.', thousands_sep=','
+    # ,N  → frac_marker=',', по умолчанию decimal_sep=',', thousands_sep='.'
     decimals = 0
     decimal_sep = None
     frac_marker = None          # '.' или ',' — помним, какой маркер был
@@ -111,10 +111,9 @@ def parse_n_mask(mask: str) -> dict:
     if frac_match:
         frac_marker = frac_match.group(1)
         decimals = int(frac_match.group(2))
-        # Маркер дробной части напрямую определяет десятичный разделитель:
-        #   .N → decimal_sep='.' (точка), auto thousands_sep=','
-        #   ,N → decimal_sep=',' (запятая), auto thousands_sep='.'
+        # Маркер дробной части определяет ПО УМОЛЧАНИЮ decimal_sep
         decimal_sep = frac_marker
+        # Авто-разделитель тысяч — противоположный символ
         if frac_marker == ',':
             thousands_sep = '.'     # авто-разделитель тысяч (EU стиль)
         else:
@@ -143,26 +142,13 @@ def parse_n_mask(mask: str) -> dict:
             shift = 'right'
             m = m[1:]
 
-    # --- Последний символ: разделитель ---
-    # Правило зависит от маркера дробной части:
-    #   .N  + символ → символ заменяет decimal_sep
-    #       ИСКЛЮЧЕНИЕ: '_' при .N означает no_thousands (подавить разделители тысяч)
-    #   ,N  + символ → символ заменяет thousands_sep (через карту)
-    #   без дроби + символ → символ заменяет thousands_sep (через карту)
+    # --- Последний символ: разделитель тысяч ---
+    # Символ из карты → разделитель тысяч (включая '_' → пробел)
     if m and m[0] in _THOUSANDS_SEP_MAP:
         ch = m[0]
         mapped = _THOUSANDS_SEP_MAP[ch]
-        if frac_marker == '.':
-            if ch == '_':
-                # '_' при маркере '.' означает подавление разделителей тысяч
-                no_thousands = True
-            else:
-                # При маркере '.' последний символ заменяет десятичный разделитель
-                decimal_sep = mapped
-        else:
-            # При маркере ',' или без дробной части → разделитель тысяч
-            thousands_sep = mapped
-            thousands_sep_explicit = True
+        thousands_sep = mapped
+        thousands_sep_explicit = True
         m = m[1:]
 
     # Если decimal_sep не был определён, но есть дробные знаки → запятая по умолчанию
@@ -171,6 +157,17 @@ def parse_n_mask(mask: str) -> dict:
     # Если decimal_sep не был определён и нет дробных → None (не используется)
     elif decimal_sep is None:
         decimal_sep = ','
+
+    # --- Инверсия decimal_sep при совпадении с разделителем тысяч ---
+    # В Diasoft: если последний символ (разделитель тысяч) совпадает с frac_marker,
+    # это означает "используй этот символ как разделитель тысяч",
+    # поэтому decimal_sep должен быть противоположным
+    if (decimals > 0 
+        and thousands_sep_explicit 
+        and frac_marker is not None 
+        and thousands_sep == frac_marker):
+        # Инвертируем decimal_sep
+        decimal_sep = '.' if decimal_sep == ',' else ','
 
     return {
         'show_sign': show_sign,
@@ -306,7 +303,14 @@ def apply_n_mask(value: str, params: dict) -> str:
     elif current_len < width:
         padding = width - current_len
 
-        if blank_zero:
+        if decimals > 0:
+            # Для чисел с дробной частью — заполнение точками/нулями НЕ применяется
+            # Просто возвращаем число без заполнения (или с пробелами при blank_zero)
+            if blank_zero:
+                final = number_str.rjust(width, ' ')
+            else:
+                final = number_str
+        elif blank_zero:
             # blank_zero: заполняем пробелами вместо ведущих нулей/точек
             padded_number = number_str.rjust(width, fill_char)
             # Заменяем все ведущие fill_char на пробелы
