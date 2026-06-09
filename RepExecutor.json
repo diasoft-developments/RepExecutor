@@ -1,6 +1,6 @@
 {
     "report_name": "ДЕПОЗИТ_Заявление2026БК",
-    "output_path": "c:\\Tasks\\10002479019.pdf",
+    "output_path": "c:\\Tasks\\10002479017.pdf",
     "output_format": "PDF",
     "params": {
         "Podpisant": 10000000026,
@@ -9,6 +9,6 @@
     },
     "marks": {
         "Type": 3,
-        "ID": 10002479019
+        "ID": 10002479017
     }
 }
