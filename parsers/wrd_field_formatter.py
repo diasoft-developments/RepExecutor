@@ -10,7 +10,9 @@ from loguru import logger
 # ---------------------------------------------------------------------------
 from parsers.wrd_parser import TWRDigitField, TWRField
 from parsers.n_mask import parse_n_mask, apply_n_mask
-from utils.num_to_words import format_number_with_words
+from parsers.d_mask import parse_d_mask, apply_d_mask, format_date_with_mask
+from parsers.t_mask import parse_t_mask, apply_t_mask, format_time_with_mask
+from parsers.n_to_words import format_number_with_words as _format_number_with_words, number_to_words
 
 
 # Карта символов разделителей тысяч (копия из n_mask для внутреннего использования)
@@ -93,32 +95,60 @@ def _apply_single_mask(value: str, mask: str) -> str:
         params = _parse_n_mask(mask_stripped)
         return _apply_n_mask(value, params)
 
-    # --- Дата/числовая маска: @d{width}. ---
-    date_match = re.match(r'^@d(\d+)\.$', mask_stripped)
-    if date_match:
-        w = int(date_match.group(1))
-        try:
-            if isinstance(value, (datetime.date, datetime.datetime)):
-                if w == 6:
-                    return value.strftime('%d%m%y')
-                elif w == 8:
-                    return value.strftime('%d%m%Y')
-                else:
-                    return value.strftime(f'%0{w}d')
-            else:
-                parsed = datetime.datetime.strptime(str(value).strip(), '%Y-%m-%d %H:%M:%S')
-                if w == 6:
-                    return parsed.strftime('%d%m%y')
-                elif w == 8:
-                    return parsed.strftime('%d%m%Y')
-                else:
-                    return str(parsed).zfill(w)
-        except (ValueError, TypeError):
+    # --- Дата/числовая маска @d ---
+    # Поддерживаем два формата:
+    #   1) @d{width}. — упрощённый (6 цифр, 8 цифр) — ТОЛЬКО когда width >= 4
+    #      и точка НЕ является разделителем Diasoft
+    #   2) @d<Тип>[<Разделитель>]['b']['t'] — полный синтаксис Diasoft
+    if mask_stripped.startswith('@d') or mask_stripped.startswith('@D'):
+        # Проверяем, является ли это старым форматом @d{width}.
+        # Старый формат: @d6., @d8., @d10. и т.д. — ширина >= 4 и точка в конце
+        # НО если после числа идёт разделитель Diasoft (./-_), это новый формат
+        # Ключевое отличие: в старом формате точка — последний символ маски
+        # а в новом формате после точки могут идти флаги b/t
+        # Для надёжности: если число < 4 (тип даты 1-14), всегда новый формат
+        # Если число >= 4 и маска заканчивается на точку — проверяем:
+        #   - если после точки есть ещё что-то (флаги) → новый формат
+        #   - если точка последняя → старый формат ТОЛЬКО если число не совпадает с типом даты
+        date_match = re.match(r'^@[dD](\d+)\.$', mask_stripped)
+        if date_match:
+            width_or_type = int(date_match.group(1))
+            # Типы дат Diasoft: 1-14 (кроме 12). Если число попадает в этот диапазон — новый формат.
+            if 1 <= width_or_type <= 14 and width_or_type != 12:
+                # Это новый формат Diasoft (тип даты без дополнительных параметров)
+                return format_date_with_mask(value, mask_stripped)
+            # Старый упрощённый формат
+            w = int(date_match.group(1))
             try:
-                num_val = int(float(value))
-                return str(num_val).zfill(w)
+                if isinstance(value, (datetime.date, datetime.datetime)):
+                    if w == 6:
+                        return value.strftime('%d%m%y')
+                    elif w == 8:
+                        return value.strftime('%d%m%Y')
+                    else:
+                        return value.strftime(f'%0{w}d')
+                else:
+                    parsed = datetime.datetime.strptime(str(value).strip(), '%Y-%m-%d %H:%M:%S')
+                    if w == 6:
+                        return parsed.strftime('%d%m%y')
+                    elif w == 8:
+                        return parsed.strftime('%d%m%Y')
+                    else:
+                        return str(parsed).zfill(w)
             except (ValueError, TypeError):
-                return value.zfill(w)
+                try:
+                    num_val = int(float(value))
+                    return str(num_val).zfill(w)
+                except (ValueError, TypeError):
+                    return str(value).zfill(w)
+        else:
+            # Полный синтаксис Diasoft: @d<Тип>[<Разделитель>]['b']['t']
+            return format_date_with_mask(value, mask_stripped)
+
+    # --- Маска времени: @t<Typ>[b] ---
+    # Тип 1: hh:mm  |  Тип 2: hhmm  |  Тип 3: hh:mmam/pm  |  Тип 4: hh:mm:ss
+    if mask_stripped.startswith('@t') or mask_stripped.startswith('@T'):
+        return format_time_with_mask(value, mask_stripped)
 
     # --- Строковая маска: @s<w ---
     str_match = re.match(r'^@s<(\d+)$', mask_stripped)
@@ -128,6 +158,38 @@ def _apply_single_mask(value: str, mask: str) -> str:
 
     # Маска не распознана — возвращаем исходное значение
     return value
+
+
+# ---------------------------------------------------------------------------
+# Публичная обёртка: format_number_with_words(fields, field_name, number)
+# Для удобства тестирования и внешнего API
+# ---------------------------------------------------------------------------
+def format_number_with_words(digit_fields: dict, field_name: str, number: float) -> str:
+    """
+    Форматирует число прописью с использованием параметров из TWRDigitField.
+
+    Args:
+        digit_fields: Словарь {field_name: TWRDigitField} от parse_twr_digit_fields()
+        field_name: Имя поля (FieldName) для поиска параметров
+        number: Число для форматирования
+
+    Returns:
+        Строка с числом прописью, или исходное число если поле не найдено
+    """
+    field = digit_fields.get(field_name)
+    if field is None:
+        logger.warning(f"Поле '{field_name}' не найдено в digit_fields")
+        return str(number)
+
+    # Извлекаем формы
+    int_forms = [f.replace('#', '') for f in field.IntParts] if field.IntParts else None
+    frac_forms = [f.replace('#', '') for f in field.FracParts] if field.FracParts else None
+
+    # Определяем количество дробных знаков
+    if not field.FracPartDefinition:
+        frac_forms = None
+
+    return _format_number_with_words(number, int_forms, frac_parts=frac_forms)
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +272,7 @@ def _apply_digit_fields(data_rows: list, digit_fields: dict) -> list:
             try:
                 # Пытаемся преобразовать в число
                 num_value = float(raw_value)
-                words = format_number_with_words(num_value, int_forms, frac_parts=frac_forms)
+                words = _format_number_with_words(num_value, int_forms, frac_parts=frac_forms)
                 setattr(row, new_col, words)
             except (ValueError, TypeError):
                 # Если не число — оставляем как есть
@@ -279,11 +341,29 @@ def _apply_twr_masks(data_rows: list, twr_fields: dict) -> list:
                 continue
 
             try:
-                # Если маска не указана, проверяем является ли значение числовым
+                # Если маска не указана, проверяем является ли значение числовым или датой
                 effective_mask = mask
                 if not has_mask:
+                    str_value = str(raw_value).strip()
+                    
+                    # Сначала пытаемся распознать как дату
+                    parsed_date = None
+                    for date_format in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%d.%m.%Y', '%d/%m/%Y'):
+                        try:
+                            parsed_date = datetime.datetime.strptime(str_value, date_format)
+                            break
+                        except ValueError:
+                            continue
+                    
+                    if parsed_date is not None:
+                        # Дата без маски — выводим в формате dd/MM/yyyy
+                        formatted = parsed_date.strftime('%d/%m/%Y')
+                        logger.debug(f"Поле '{field_name}' без маски, дата → формат dd/MM/yyyy: {formatted}")
+                        setattr(row, target_col, formatted)
+                        continue
+                    
                     # Пытаемся определить, является ли значение числовым
-                    test_val = str(raw_value).replace(',', '.')
+                    test_val = str_value.replace(',', '.')
                     try:
                         float_val = float(test_val)
                         # Целое число — оставляем как есть

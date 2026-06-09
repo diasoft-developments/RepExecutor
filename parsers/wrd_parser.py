@@ -87,16 +87,37 @@ class TWRDigitField:
     - IntParts[0..2]: формы слов для целой части (мелкая, мелкой, мелких)
     - FracParts[0..2]: формы слов для дробной части (копейка, копейки, копеек)
     - IncludeDigits: показывать ли цифровое значение
+    - Digits: количество значащих цифр для форматирования (по умолчанию 0 — не ограничено)
+    - FracPartDefinition: печатать название дробных частей ("десятых"/"сотых"). Если False — использовать FracParts. По умолчанию True.
+    - LeadingZero: печатать "Ноль" для целой части, если она равна 0. По умолчанию True.
+    - TrailingZero: печатать незначащие нули в дробной части. По умолчанию True.
+    - NoZeroFrac: не печатать нулевую дробную часть. По умолчанию False.
+    - IntOnly: печатать только целую часть. По умолчанию False.
+    - FracPartDigital: печатать дробную часть цифрами (не прописью). По умолчанию False.
     """
     def __init__(self, field_name: str = "", data_field: str = "", 
                  int_parts: list = None, 
                  frac_parts: list = None,
-                 include_digits: bool = True):
+                 include_digits: bool = True,
+                 digits: int = 0,
+                 frac_part_definition: bool = True,
+                 leading_zero: bool = True,
+                 trailing_zero: bool = True,
+                 no_zero_frac: bool = False,
+                 int_only: bool = False,
+                 frac_part_digital: bool = False):
         self.FieldName = field_name
         self.DataField = data_field
         self.IntParts = int_parts or ["", "", ""]
         self.FracParts = frac_parts or ["", "", ""]
         self.IncludeDigits = include_digits
+        self.Digits = digits
+        self.FracPartDefinition = frac_part_definition
+        self.LeadingZero = leading_zero
+        self.TrailingZero = trailing_zero
+        self.NoZeroFrac = no_zero_frac
+        self.IntOnly = int_only
+        self.FracPartDigital = frac_part_digital
     
     def __repr__(self):
         return (f"TWRDigitField(FieldName='{self.FieldName}', DataField='{self.DataField}', "
@@ -158,19 +179,25 @@ def parse_twr_digit_fields(text: str) -> dict:
     Извлекает все TWRDigitField из DFM-текста .wrd файла.
     
     Пример блока:
-        object MGRWr: TWRDigitField
+          object MGRWr: TWRDigitField
             FieldName = 'MGRWr'
             DisplayLabel = 'MGRWr'
             IntPart.Strings = (
-              #1094#1077#1083#1072#1103
-              #1094#1077#1083#1086#1081
-              #1094#1077#1083#1099#1093)
+            #1094#1077#1083#1072#1103
+            #1094#1077#1083#1086#1081
+            #1094#1077#1083#1099#1093)
             FracPart.Strings = (
-              ''
-              ''
-              '')
+            ''
+            ''
+            '')
             Digits = 3
+            FracPartDefinition = False -- Печать названия дробных частей. Если парамера нет, то True 
             DataField = 'MGR'
+            LeadingZero = False        -- Печать "Ноль" для целой части, если она равна 0. Если парамера нет, то True 
+            TrailingZero = False       -- Печать незначащие нули в дробной части. Если парамера нет, то True 
+            NoZeroFrac = True          -- Не печатать нулевую дробную часть. Если парамера нет, то False 
+            IntOnly = True             -- Печатать только целую часть. Если парамера нет, то False 
+            FracPartDigital = True     -- Печатать дробную часть цифрами.  Если парамера нет, то False
         end
     
     Returns:
@@ -207,8 +234,40 @@ def parse_twr_digit_fields(text: str) -> dict:
         if all(p == "" for p in frac_parts):
             frac_parts = _extract_string_array(block, "FracParts")
         
+        # Извлекаем Digits
+        digits_match = re.search(r"Digits\s*=\s*(\d+)", block)
+        digits = int(digits_match.group(1)) if digits_match else 0
+        
+        # Извлекаем FracPartDefinition
+        fpd_match = re.search(r"FracPartDefinition\s*=\s*(True|False)", block, re.IGNORECASE)
+        frac_part_definition = fpd_match.group(1).lower() == 'true' if fpd_match else True
+        
+        # Извлекаем LeadingZero
+        lz_match = re.search(r"LeadingZero\s*=\s*(True|False)", block, re.IGNORECASE)
+        leading_zero = lz_match.group(1).lower() == 'true' if lz_match else True
+        
+        # Извлекаем TrailingZero
+        tz_match = re.search(r"TrailingZero\s*=\s*(True|False)", block, re.IGNORECASE)
+        trailing_zero = tz_match.group(1).lower() == 'true' if tz_match else True
+        
+        # Извлекаем NoZeroFrac
+        nzf_match = re.search(r"NoZeroFrac\s*=\s*(True|False)", block, re.IGNORECASE)
+        no_zero_frac = nzf_match.group(1).lower() == 'true' if nzf_match else False
+        
+        # Извлекаем IntOnly
+        io_match = re.search(r"IntOnly\s*=\s*(True|False)", block, re.IGNORECASE)
+        int_only = io_match.group(1).lower() == 'true' if io_match else False
+        
+        # Извлекаем FracPartDigital
+        fpd2_match = re.search(r"FracPartDigital\s*=\s*(True|False)", block, re.IGNORECASE)
+        frac_part_digital = fpd2_match.group(1).lower() == 'true' if fpd2_match else False
+        
         if data_field:
-            fields[field_name] = TWRDigitField(field_name, data_field, int_parts, frac_parts, include_digits)
+            fields[field_name] = TWRDigitField(
+                field_name, data_field, int_parts, frac_parts, include_digits,
+                digits, frac_part_definition, leading_zero, trailing_zero,
+                no_zero_frac, int_only, frac_part_digital
+            )
     
     return fields
 

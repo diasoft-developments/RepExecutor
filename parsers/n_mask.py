@@ -300,10 +300,7 @@ def apply_n_mask(value: str, params: dict) -> str:
             return raw_digits.rjust(width, '0')
 
     # --- Стандартная обработка ширины (без right shift) ---
-    # При decimals > 0 не дополняем до ширины — возвращаем число как есть
-    if decimals > 0:
-        final = number_str
-    elif current_len > width:
+    if current_len > width:
         # ПЕРЕПОЛНЕНИЕ — заполняем '*'
         final = '*' * width
     elif current_len < width:
