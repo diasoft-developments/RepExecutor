@@ -45,6 +45,7 @@ def get_connection():
 
     try:
         conn = pyodbc.connect(connection_string)
+        conn.autocommit = True
         logger.info(f"Успешно подключено к базе данных: {database} на сервере {server}")
         return conn
     except Exception as e:

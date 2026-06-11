@@ -131,7 +131,7 @@ def process_query_and_files(connection, cfg: ConfigModel, common_cfg: configpars
     """
 
     cursor = connection.cursor()
-    try:
+    try:        
         cursor.execute(sql, cfg.report_name)
     except Exception as e:
         logger.error("Ошибка выполнения запроса:", e)
