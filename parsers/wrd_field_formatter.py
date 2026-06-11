@@ -259,7 +259,7 @@ def _apply_digit_fields(data_rows: list, digit_fields: dict) -> list:
         frac_forms = list(digit_field.FracParts) if digit_field.FracParts else None  # ["копейка", "копейки", "копеек"]
 
         logger.debug(f"Применяем DigitField '{field_name}' → новый столбец '{new_col}' (источник: {target_col})")
-        logger.info(f"  int_forms={int_forms}, frac_forms={frac_forms}")
+        logger.debug(f"  int_forms={int_forms}, frac_forms={frac_forms}")
 
         # Обрабатываем каждую строку
         for row in data_rows:
@@ -315,10 +315,16 @@ def _apply_twr_masks(data_rows: list, twr_fields: dict) -> list:
         # Приоритет 1: точное совпадение FieldName
         if field_name in column_names:
             target_col = field_name
-        # Приоритет 2: поиск по FieldName как подстроке
-        else:
+        # Приоритет 2: регистронезависимое точное совпадение
+        elif not any(ci.lower() == field_name.lower() for ci in column_names):
             for col in column_names:
-                if field_name in col:
+                if col.lower() == field_name.lower():
+                    target_col = col
+                    break
+        # Приоритет 3: поиск по FieldName как подстроке (регистронезависимо)
+        if not target_col:
+            for col in column_names:
+                if field_name.lower() in col.lower():
                     target_col = col
                     break
 
